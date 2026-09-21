@@ -2772,7 +2772,8 @@ void func_801A43DC(UNUSED struct GdObj *obj) {
 
 /* 252BC0 -> 252BE0 */
 void *func_801A43F0(UNUSED const char *menufmt, ...) {
-    //! @bug no return; function was stubbed
+    //! @bug function was stubbed; callers treat the result as an optional menu.
+    return NULL;
 }
 
 /* 252BE0 -> 252BF0 */

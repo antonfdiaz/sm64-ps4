@@ -101,6 +101,8 @@ static void append_line(char *buf, size_t *len, const char *str) {
 static const char *shader_item_to_str(uint32_t item, bool with_alpha, bool only_alpha, bool inputs_have_alpha, bool hint_single_element) {
     if (!only_alpha) {
         switch (item) {
+            default:
+                return with_alpha ? "vec4(0.0, 0.0, 0.0, 0.0)" : "vec3(0.0, 0.0, 0.0)";
             case SHADER_0:
                 return with_alpha ? "vec4(0.0, 0.0, 0.0, 0.0)" : "vec3(0.0, 0.0, 0.0)";
             case SHADER_INPUT_1:
@@ -121,6 +123,8 @@ static const char *shader_item_to_str(uint32_t item, bool with_alpha, bool only_
         }
     } else {
         switch (item) {
+            default:
+                return "0.0";
             case SHADER_0:
                 return "0.0";
             case SHADER_INPUT_1:

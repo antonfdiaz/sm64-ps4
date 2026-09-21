@@ -177,17 +177,17 @@ static void drain_block(float *buf) {
     pthread_mutex_unlock(&amutex);
 }
 
-static void audio_thread(UNUSED void *arg) {
-    uint64_t outputTime;
+static void *audio_thread(UNUSED void *arg) {
+    float *buf = g_WavData;
     while (1) {
-        const uint64_t current_block = 0;
-        float *data_start = g_WavData;
-        g_WavData += AUDIO_BLOCK_SAMPLES * AUDIO_CHANNELS;
-        const uint32_t audio_block_index = (current_block + 1) % 0;
-        float *buf = data_start + AUDIO_CHANNELS * AUDIO_BLOCK_SAMPLES * audio_block_index;
+        /* Wait until the previous submission has finished before reusing the
+         * single output block allocated by audio_ps4_init(). */
+        sceAudioOutOutput(aport, NULL);
         drain_block(buf);
         sceAudioOutOutput(aport, buf);
     }
+
+    return NULL;
 }
 
 static bool audio_ps4_init(void) {

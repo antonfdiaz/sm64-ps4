@@ -435,27 +435,47 @@ export LANG := C
 
 else # TARGET_N64
 ifeq ($(TARGET_PS4),1)
+  ifeq ($(strip $(OO_PS4_TOOLCHAIN)),)
+    OO_PS4_TOOLCHAIN := $(HOME)/ps4/OpenOrbis-PS4-Toolchain
+  endif
+  ifeq ($(wildcard $(OO_PS4_TOOLCHAIN)/include/stddef.h),)
+    ifneq ($(wildcard $(HOME)/ps4/OpenOrbis-PS4-Toolchain/include/stddef.h),)
+      OO_PS4_TOOLCHAIN := $(HOME)/ps4/OpenOrbis-PS4-Toolchain
+    else
+      $(error OpenOrbis toolchain not found or incomplete at "$(OO_PS4_TOOLCHAIN)"; set OO_PS4_TOOLCHAIN to its root directory)
+    endif
+  endif
   PS4_APPNAME := sm64-ps4
   PS4_AUTH_INFO := 000000000000000000000000001C004000FF000000000080000000000000000000000000000000000000008000400040000000000000008000000000000000080040FFFF000000F000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 
   UNAME_S := $(shell uname -s)
   ifeq ($(UNAME_S),Linux)
-    CC      := clang++
+    CC      := clang
+    CXX     := clang++
     LD      := ld.lld
     CDIR    := linux
   endif
   ifeq ($(UNAME_S),Darwin)
-    CC      := /usr/local/opt/llvm/bin/clang++
+    CC      := /usr/local/opt/llvm/bin/clang
+    CXX     := /usr/local/opt/llvm/bin/clang++
     LD      := /usr/local/opt/llvm/bin/ld.lld
     CDIR    := macos
   endif
 
-  CPP       := cpp -P
+  # Sound sequences are still assembled as N64/MIPS data before being
+  # embedded in the PS4 executable.  Apple's /usr/bin/as is an ARM64 Clang
+  # wrapper and cannot assemble these sources.
+  PS4_MIPS_PREFIX := $(shell for prefix in mipsel-none-elf- mips-linux-gnu- mips64-elf- mips64-linux-gnu-; do if command -v "$${prefix}as" >/dev/null 2>&1; then echo "$${prefix}"; break; fi; done)
+  ifeq ($(PS4_MIPS_PREFIX),)
+    $(error TARGET_PS4 requires a MIPS binutils package (for example: brew install mipsel-none-elf-binutils))
+  endif
+  AS       := $(PS4_MIPS_PREFIX)as
+
+  CPP       := $(CC) -E -P -x c
   OBJDUMP   := objdump
-  OBJCOPY   := objcopy
+  OBJCOPY   := $(PS4_MIPS_PREFIX)objcopy
   PYTHON    := python3
 
-  MAKE_FSELF := python2 $(OO_PS4_TOOLCHAIN)/scripts/make_fself.py
 else
   AS := as
   ifneq ($(TARGET_WEB),1)
@@ -489,14 +509,14 @@ ifeq ($(TARGET_WEB),1)
   PLATFORM_LDFLAGS := -lm -no-pie -s TOTAL_MEMORY=20MB -g4 --source-map-base http://localhost:8080/ -s "EXTRA_EXPORTED_RUNTIME_METHODS=['callMain']"
 endif
 ifeq ($(TARGET_PS4),1)
-  DEFINES += -DTARGET_PS4 -DORBIS -D_BSD_SOURCE -DNDEBUG
+  DEFINES += -DTARGET_PS4 -DORBIS -D__ORBIS__ -D_BSD_SOURCE -DNDEBUG
   LIBDIRS += -L$(OO_PS4_TOOLCHAIN)/lib
-  INCDIRS += -I$(OO_PS4_TOOLCHAIN)/include -I$(OO_PS4_TOOLCHAIN)/include/orbis/_types -Ideps/include
+  INCDIRS += -Ideps/include -I$(OO_PS4_TOOLCHAIN)/include
 
-  PS4_CFLAGS := -cc1 -x c -triple x86_64-scei-ps4-elf -munwind-tables -std=c11 -ffreestanding -nostdinc++ -nobuiltininc -fno-builtin -nostdsysteminc -stack-protector 0 -Werror-implicit-function-declaration -Wfatal-errors $(INCDIRS) $(DEFINES) -pthread -fuse-init-array -emit-obj
-  PS4_CXXFLAGS := -cc1 -x c++ -triple x86_64-scei-ps4-elf -munwind-tables -std=c++11 -fcxx-exceptions -ffreestanding -nostdinc++ -nobuiltininc -fno-builtin -nostdsysteminc -stack-protector 0 -Werror-implicit-function-declaration -Wfatal-errors $(INCDIRS) $(DEFINES) -pthread -fuse-init-array -emit-obj
-  PS4_LDFLAGS := -m elf_x86_64 -pie --script $(OO_PS4_TOOLCHAIN)/link.x --eh-frame-hdr ps4/crt1.o
-  PS4_LIBS += -lkernel -lSceLibcInternal -lScePosix -lSceSysmodule -lSceSystemService -lSceUserService -lSceAudioOut -lScePad -lScePigletv2VSH
+  PS4_CFLAGS := --target=x86_64-pc-freebsd12-elf -fPIC -funwind-tables -ffreestanding -fno-builtin -std=c11 -isysroot $(OO_PS4_TOOLCHAIN) $(INCDIRS) $(DEFINES) -pthread -c
+  PS4_CXXFLAGS := $(PS4_CFLAGS) -std=c++11 -fcxx-exceptions -isystem $(OO_PS4_TOOLCHAIN)/include/c++/v1
+  PS4_LDFLAGS := -m elf_x86_64 -pie --script $(OO_PS4_TOOLCHAIN)/link.x --eh-frame-hdr $(OO_PS4_TOOLCHAIN)/lib/crt1.o
+  PS4_LIBS += -lc -lkernel -lc++ -lSceLibcInternal -lScePosix -lSceSysmodule -lSceSystemService -lSceUserService -lSceAudioOut -lScePad -lScePigletv2VSH
 
   PLATFORM_CFLAGS := $(PS4_CFLAGS) $(OPT_FLAGS) $(INCLUDE_CFLAGS) $(VERSION_CFLAGS) $(GRUCODE_CFLAGS)
   PLATFORM_LDFLAGS := $(PS4_LDFLAGS) $(LIBDIRS) $(PS4_LIBS)
@@ -608,9 +628,11 @@ $(BUILD_DIR)/src/game/crash_screen.o: $(CRASH_TEXTURE_C_FILES)
 $(BUILD_DIR)/lib/rsp.o: $(BUILD_DIR)/rsp/rspboot.bin $(BUILD_DIR)/rsp/fast3d.bin $(BUILD_DIR)/rsp/audio.bin
 
 $(BUILD_DIR)/include/text_strings.h: include/text_strings.h.in
+	mkdir -p $(dir $@)
 	$(TEXTCONV) charmap.txt $< $@
 
 $(BUILD_DIR)/include/text_menu_strings.h: include/text_menu_strings.h.in
+	mkdir -p $(dir $@)
 	$(TEXTCONV) charmap_menu.txt $< $@
 
 ifeq ($(COMPILER),gcc)
@@ -643,9 +665,11 @@ endif
 endif
 
 $(BUILD_DIR)/text/%/define_courses.inc.c: text/define_courses.inc.c text/%/courses.h
+	mkdir -p $(dir $@)
 	$(CPP) $(VERSION_CFLAGS) $< -o - -I text/$*/ | $(TEXTCONV) charmap.txt - $@
 
 $(BUILD_DIR)/text/%/define_text.inc.c: text/define_text.inc.c text/%/courses.h text/%/dialogs.h
+	mkdir -p $(dir $@)
 	$(CPP) $(VERSION_CFLAGS) $< -o - -I text/$*/ | $(TEXTCONV) charmap.txt - $@
 
 RSP_DIRS := $(BUILD_DIR)/rsp
@@ -665,18 +689,22 @@ $(BUILD_DIR)/src/game/ingame_menu.o: $(BUILD_DIR)/include/text_strings.h
 
 # RGBA32, RGBA16, IA16, IA8, IA4, IA1, I8, I4
 $(BUILD_DIR)/%: %.png
+	mkdir -p $(dir $@)
 	$(N64GRAPHICS) -i $@ -g $< -f $(lastword $(subst ., ,$@))
 
 $(BUILD_DIR)/%.inc.c: $(BUILD_DIR)/% %.png
+	mkdir -p $(dir $@)
 	hexdump -v -e '1/1 "0x%X,"' $< > $@
 	echo >> $@
 
 # Color Index CI8
 $(BUILD_DIR)/%.ci8: %.ci8.png
+	mkdir -p $(dir $@)
 	$(N64GRAPHICS_CI) -i $@ -g $< -f ci8
 
 # Color Index CI4
 $(BUILD_DIR)/%.ci4: %.ci4.png
+	mkdir -p $(dir $@)
 	$(N64GRAPHICS_CI) -i $@ -g $< -f ci4
 
 ################################################################
@@ -716,12 +744,15 @@ $(BUILD_DIR)/%.mio0.s: $(BUILD_DIR)/%.mio0
 endif
 
 $(BUILD_DIR)/%.table: %.aiff
+	mkdir -p $(dir $@)
 	$(AIFF_EXTRACT_CODEBOOK) $< >$@
 
 $(BUILD_DIR)/%.aifc: $(BUILD_DIR)/%.table %.aiff
+	mkdir -p $(dir $@)
 	$(VADPCM_ENC) -c $^ $@
 
 $(BUILD_DIR)/rsp/%.bin $(BUILD_DIR)/rsp/%_data.bin: rsp/%.s
+	mkdir -p $(dir $@)
 	$(RSPASM) -sym $@.sym -definelabel $(VERSION_DEF) 1 -definelabel $(GRUCODE_DEF) 1 -strequ CODE_FILE $(BUILD_DIR)/rsp/$*.bin -strequ DATA_FILE $(BUILD_DIR)/rsp/$*_data.bin $<
 
 ifeq ($(TARGET_PS4),1)
@@ -764,6 +795,7 @@ $(SOUND_BIN_DIR)/%.o: $(SOUND_BIN_DIR)/%.s
 	$(AS) $(ASFLAGS) -o $@ $<
 
 $(SOUND_BIN_DIR)/%.inc.c: $(SOUND_BIN_DIR)/%
+	mkdir -p $(dir $@)
 	hexdump -v -e '1/1 "0x%X,"' $< > $@
 	echo >> $@
 
@@ -772,12 +804,15 @@ $(SOUND_BIN_DIR)/sound_data.o: $(SOUND_BIN_DIR)/sound_data.ctl.inc.c $(SOUND_BIN
 $(BUILD_DIR)/levels/scripts.o: $(BUILD_DIR)/include/level_headers.h
 
 $(BUILD_DIR)/include/level_headers.h: levels/level_headers.h.in
-	$(CPP) -I . levels/level_headers.h.in | $(PYTHON) tools/output_level_headers.py > $(BUILD_DIR)/include/level_headers.h
+	mkdir -p $(dir $@)
+	$(CPP) -I . levels/level_headers.h.in | $(PYTHON) tools/output_level_headers.py > $@
 
 $(BUILD_DIR)/assets/mario_anim_data.c: $(wildcard assets/anims/*.inc.c)
+	mkdir -p $(dir $@)
 	$(PYTHON) tools/mario_anims_converter.py > $@
 
 $(BUILD_DIR)/assets/demo_data.c: assets/demo_data.json $(wildcard assets/demos/*.bin)
+	mkdir -p $(dir $@)
 	$(PYTHON) tools/demo_data_converter.py assets/demo_data.json $(VERSION_CFLAGS) > $@
 
 ifeq ($(COMPILER),ido)
@@ -842,13 +877,16 @@ $(GLOBAL_ASM_DEP).$(NON_MATCHING):
 
 ifeq ($(TARGET_PS4),1)
 $(BUILD_DIR)/%.o: %.cpp
+	mkdir -p $(dir $@)
 	$(CXX) $(CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/%.o: %.c
+	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $<
 
 
 $(BUILD_DIR)/%.o: $(BUILD_DIR)/%.c
+	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $<
 else
 $(BUILD_DIR)/%.o: %.cpp
@@ -866,6 +904,7 @@ $(BUILD_DIR)/%.o: $(BUILD_DIR)/%.c
 endif
 
 $(BUILD_DIR)/%.o: %.s
+	mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) -MD $(BUILD_DIR)/$*.d -o $@ $<
 
 ifeq ($(TARGET_N64),1)
@@ -894,22 +933,65 @@ $(EXE): $(O_FILES) $(MIO0_FILES:.mio0=.o) $(SOUND_OBJ_FILES) $(ULTRA_O_FILES) $(
 	$(LD) -L $(BUILD_DIR) -o $@ $(O_FILES) $(SOUND_OBJ_FILES) $(ULTRA_O_FILES) $(GODDARD_O_FILES) $(LDFLAGS)
 endif
 
-oelf: all
-	$(OO_PS4_TOOLCHAIN)/bin/$(CDIR)/create-eboot -in=$(BUILD_DIR)/$(TARGET) -out=$(BUILD_DIR)/$(TARGET).oelf --paid 0x3800000000000011
+PS4_CREATE_FSELF := $(OO_PS4_TOOLCHAIN)/bin/$(CDIR)/create-fself
+PS4_PKGTOOL := $(OO_PS4_TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core
+PS4_OELF := $(BUILD_DIR)/$(TARGET).oelf
+PS4_FSELF := $(BUILD_DIR)/../$(PS4_APPNAME).self
+PS4_PACKAGE_DIR := $(BUILD_DIR)/package
+PS4_PACKAGE_SFO := $(PS4_PACKAGE_DIR)/sce_sys/param.sfo
+PS4_PACKAGE_EBOOT := $(PS4_PACKAGE_DIR)/eboot.bin
+PS4_PACKAGE_FILES := \
+	$(PS4_PACKAGE_EBOOT) \
+	$(PS4_PACKAGE_SFO) \
+	$(PS4_PACKAGE_DIR)/sce_sys/pronunciation.xml \
+	$(PS4_PACKAGE_DIR)/sce_sys/pronunciation.sig \
+	$(PS4_PACKAGE_DIR)/sce_sys/icon0.png \
+	$(PS4_PACKAGE_DIR)/sce_sys/pic0.png \
+	$(PS4_PACKAGE_DIR)/sce_sys/pic1.png
+PS4_GP4 := $(PS4_PACKAGE_DIR)/$(PS4_APPNAME).gp4
 
-fself: oelf
-	$(MAKE_FSELF) --auth-info $(PS4_AUTH_INFO) $(BUILD_DIR)/$(TARGET).oelf $(BUILD_DIR)/$(TARGET).self
+oelf: $(PS4_OELF)
 
-pkg: fself
-	cp ps4/$(VERSION)/param.sfo ps4/sce_sys/param.sfo
-	cp ps4/$(VERSION)/$(PS4_APPNAME).gp4 ps4/$(PS4_APPNAME).gp4
-	cp $(BUILD_DIR)/$(TARGET).self $(BUILD_DIR)/../$(PS4_APPNAME).self
-	$(OO_PS4_TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core sfo_listentries ps4/sce_sys/param.sfo
-	$(OO_PS4_TOOLCHAIN)/bin/$(CDIR)/PkgTool.Core pkg_build ps4/$(PS4_APPNAME).gp4 $(BUILD_DIR)/../
+$(PS4_OELF): $(EXE)
+	$(PS4_CREATE_FSELF) -in=$< -out=$@ --paid 0x3800000000000011 --authinfo $(PS4_AUTH_INFO)
+
+fself: $(PS4_FSELF)
+
+$(PS4_FSELF): $(EXE)
+	mkdir -p $(dir $@)
+	$(PS4_CREATE_FSELF) -in=$< -out=$(PS4_OELF) --eboot $@ --paid 0x3800000000000011 --authinfo $(PS4_AUTH_INFO)
+
+$(PS4_PACKAGE_EBOOT): $(PS4_FSELF)
+	mkdir -p $(dir $@)
+	cp $< $@
+
+$(PS4_PACKAGE_SFO): ps4/$(VERSION)/param.sfo
+	mkdir -p $(dir $@)
+	cp $< $@
+
+$(PS4_PACKAGE_DIR)/sce_sys/%.xml: ps4/sce_sys/%.xml
+	mkdir -p $(dir $@)
+	cp $< $@
+
+$(PS4_PACKAGE_DIR)/sce_sys/%.sig: ps4/sce_sys/%.sig
+	mkdir -p $(dir $@)
+	cp $< $@
+
+$(PS4_PACKAGE_DIR)/sce_sys/%.png: ps4/sce_sys/%.png
+	mkdir -p $(dir $@)
+	cp $< $@
+
+$(PS4_GP4): $(PS4_PACKAGE_FILES) ps4/$(VERSION)/$(PS4_APPNAME).gp4
+	mkdir -p $(dir $@)
+	cp ps4/$(VERSION)/$(PS4_APPNAME).gp4 $@
+
+pkg: $(PS4_GP4)
+	$(PS4_PKGTOOL) sfo_listentries $(PS4_PACKAGE_SFO)
+	$(PS4_PKGTOOL) pkg_build $< $(BUILD_DIR)/../
 
 
 
-.PHONY: all clean distclean default diff test load libultra
+.PHONY: all clean distclean default diff test load libultra oelf fself pkg
 # with no prerequisites, .SECONDARY causes no intermediate target to be removed
 .SECONDARY:
 

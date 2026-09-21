@@ -1,3 +1,4 @@
+#include <stdio.h>
 /**
  * Create an ADPCM codebook either by extracting it from an AIFF section, or
  * by executing tabledesign.

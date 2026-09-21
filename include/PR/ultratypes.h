@@ -1,10 +1,6 @@
 #ifndef _ULTRA64_TYPES_H_
 #define _ULTRA64_TYPES_H_
 
-#ifndef NULL
-#define NULL    (void *)0
-#endif
-
 #define TRUE 1
 #define FALSE 0
 
@@ -19,6 +15,9 @@ typedef float  f32;
 typedef double f64;
 
 #ifdef TARGET_N64
+#ifndef NULL
+#define NULL    (void *)0
+#endif
 typedef signed long long int   s64;
 typedef unsigned long long int u64;
 typedef u32 size_t;
